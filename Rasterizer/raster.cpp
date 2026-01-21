@@ -268,6 +268,7 @@ void scene2() {
 
         if (renderer.canvas.keyPressed(VK_ESCAPE)) break;
 
+        //Likely suspect for MT
         for (auto& m : scene)
             render(renderer, m, camera, L);
         renderer.present();

@@ -2,9 +2,12 @@
 
 #include <iostream>
 
+#include <immintrin.h>
+#include <intrin.h>
+
 // The `vec4` class represents a 4D vector and provides operations such as scaling, addition, subtraction, 
 // normalization, and vector products (dot and cross).
-class vec4 {
+class alignas(16) vec4 {
     union {
         struct {
             float x, y, z, w; // Components of the vector
@@ -32,8 +35,20 @@ public:
     // Input Variables:
     // - scalar: Value to scale the vector by
     // Returns a new scaled `vec4`.
+    //SIMD
     vec4 operator*(float scalar) const {
-        return { x * scalar, y * scalar, z * scalar, w * scalar };
+        //Load 4 floats into register
+        __m128 va = _mm_load_ps(v);
+        //Load scalar into register
+        __m128 s = _mm_set1_ps(scalar);
+        //Multiply element wise
+        __m128 r = _mm_mul_ps(va, s);
+        //Output variable
+        vec4 output;
+        //Store result
+        _mm_storeu_ps(&output.x, r);
+        
+        return output;
     }
 
     // Divides the vector by its W component and sets W to 1.
