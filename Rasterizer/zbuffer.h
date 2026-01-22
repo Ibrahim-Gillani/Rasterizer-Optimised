@@ -54,6 +54,15 @@ public:
         }
     }
 
+    void clearSIMD() {
+        //load 8 floats of 1
+        __m256 clearValue = _mm256_set1_ps(1.0f);
+        for (unsigned int i = 0; i < width * height; i += 8) {
+            _mm256_storeu_ps(&buffer[i], clearValue);  //clear 8 floats
+        }
+    }
+
+
     // remove copying
     Zbuffer(const Zbuffer&) = delete;
     Zbuffer& operator=(const Zbuffer&) = delete;

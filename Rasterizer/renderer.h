@@ -27,7 +27,7 @@ public:
     // Clears the canvas and resets the Z-buffer.
     void clear() {
         canvas.clear();  // Clear the canvas (sets all pixels to the background color)
-        zbuffer.clear(); // Reset the Z-buffer to the farthest depth
+        zbuffer.clearSIMD(); // Reset the Z-buffer to the farthest depth
     }
 
     // Presents the current canvas frame to the display.
