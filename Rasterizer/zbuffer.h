@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <atomic>
 
 // Zbuffer class for managing depth values during rendering.
 // This class is template-constrained to only work with floating-point types (`float` or `double`).
@@ -8,6 +9,7 @@
 template<std::floating_point T> // Restricts T to be a floating-point type
 class Zbuffer {
     T* buffer;                  // Pointer to the buffer storing depth values - can also use unique_ptr []here
+    //std::atomic<T>* buffer;     // add atomic buffer
     unsigned int width, height; // Dimensions of the Z-buffer
 
 public:
@@ -33,7 +35,8 @@ public:
         width = w;
         height = h;
         if (buffer != nullptr) delete[] buffer; // remove previous version
-        buffer = new T[width * height]; // Allocate memory for the buffer
+        buffer = new T[width * height];
+        //buffer = new std::atomic<T>[width * height]; // Allocate memory for the buffer - CHANGED TO ATOMIC
     }
 
     // Accesses the depth value at the specified (x, y) coordinate.
@@ -42,7 +45,20 @@ public:
     // - y: Y-coordinate of the pixel.
     // Returns a reference to the depth value at (x, y).
     T& operator () (unsigned int x, unsigned int y) {
-        return buffer[(y * width) + x]; // Convert 2D coordinates to 1D index
+        //return buffer[(y * width) + x].load(std::memory_order_relaxed); // Convert 2D coordinates to 1D index
+        return buffer[(y * width) + x];
+    }
+
+    bool testAndSet(unsigned int x, unsigned int y, T depth) {
+        std::atomic<T>& pixel = buffer[(y * width) + x];
+        T currentDepth = pixel.load(std::memory_order_relaxed);
+
+        while (depth < currentDepth) {
+            if (pixel.compare_exchange_weak(currentDepth, depth, std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Clears the Z-buffer by setting all depth values to 1.0f,
@@ -50,7 +66,7 @@ public:
     void clear() {
         // could also use fill_n
         for (unsigned int i = 0; i < width * height; i++) {
-            buffer[i] = T(1.0); // Reset each depth value
+            buffer[i].store(T(1.0), std::memory_order_relaxed); // Reset each depth value
         }
     }
 

@@ -153,17 +153,21 @@ public:
     // - renderer: Renderer object for drawing
     // - L: Light object for shading calculations
     // - ka, kd: Ambient and diffuse lighting coefficients
-    void draw(Renderer& renderer, Light& L, float ka, float kd) {
+    void draw(Renderer& renderer, Light& L, float ka, float kd, int yMin, int yMax) {
         vec2D minV, maxV;
 
         // Get the screen-space bounds of the triangle
         getBoundsWindow(renderer.canvas, minV, maxV);
 
+        //Row clamps for MT to avoid multiple threads accessing same pixel
+        int startY = std::max((int)minV.y, yMin);
+        int endY = std::min((int)ceil(maxV.y), yMax);
+
         // Skip very small triangles
         if (area < 1.f) return;
 
         // Iterate over the bounding box and check each pixel
-        for (int y = (int)(minV.y); y < (int)ceil(maxV.y); y++) {
+        for (int y = startY; y < endY; y++) {
             //SIMD over x loop
             for (int x = (int)(minV.x); x < (int)ceil(maxV.x); x+=8) {
                 //load 8 pixels
@@ -211,6 +215,7 @@ public:
                         normal.normalise();
 
                         // Perform Z-buffer test and apply shading
+                        //if (renderer.zbuffer.testAndSet(x + i, y, depths[i]) && depths[i] > 0.001f) {
                         if (renderer.zbuffer(x + i, y) > depths[i] && depths[i] > 0.001f) {
                             // typical shader begin
                             //L.omega_i.normalise();

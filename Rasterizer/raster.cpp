@@ -5,6 +5,8 @@
 #include "GamesEngineeringBase.h" // Include the GamesEngineeringBase header
 #include <algorithm>
 #include <chrono>
+#include <thread>
+#include <vector>
 
 #include <cmath>
 #include "matrix.h"
@@ -22,7 +24,7 @@
 // - mesh: Pointer to the Mesh object containing vertices and triangles to render.
 // - camera: Matrix representing the camera's transformation.
 // - L: Light object representing the lighting parameters.
-void render(Renderer& renderer, Mesh* mesh, matrix& camera, Light& L) {
+void render(Renderer& renderer, Mesh* mesh, matrix& camera, Light& L, int yMin, int yMax) {
     // Combine perspective, camera, and world transformations for the mesh
     matrix p = renderer.perspective * camera * mesh->world;
 
@@ -59,7 +61,7 @@ void render(Renderer& renderer, Mesh* mesh, matrix& camera, Light& L) {
 
         // Create a triangle object and render it
         triangle tri(t[0], t[1], t[2]);
-        tri.draw(renderer, L, mesh->ka, mesh->kd);
+        tri.draw(renderer, L, mesh->ka, mesh->kd, yMin, yMax);
     }
 }
 
@@ -108,7 +110,7 @@ void sceneTest() {
 
         // Render each object in the scene
         for (auto& m : scene)
-            render(renderer, m, camera, L);
+           // render(renderer, m, camera, L);
 
         renderer.present(); // Display the rendered frame
     }
@@ -162,6 +164,12 @@ void scene1() {
     int cycle = 0;
     int maxCycles = 10;
 
+    //MT threads
+    //unsigned int numCPUs = std::jthread::hardware_concurrency();
+    int numCPUs = 1;
+    std::vector<std::jthread> jthreads(numCPUs);
+    int rowsPerThread = renderer.canvas.getHeight() / numCPUs;
+
     // Main rendering loop
     while (running) {
         renderer.canvas.checkInput();
@@ -188,9 +196,21 @@ void scene1() {
         if (cycle >= maxCycles * 2) {  //times 2 because it prints every 2 cycles
             running = false;  //exit after 10 loops
         }
+        {
+            for (unsigned int i = 0; i < numCPUs; i++) {
+                int yMin = i * rowsPerThread;
+                int yMax = (i == numCPUs - 1) ? renderer.canvas.getHeight() : (i + 1) * rowsPerThread;
 
-        for (auto& m : scene)
-            render(renderer, m, camera, L);
+                jthreads[i] = std::jthread([&renderer, &scene, &camera, &L, yMin, yMax]() {
+                    for (auto& m : scene) {
+                        render(renderer, m, camera, L, yMin, yMax);
+                    }
+                    });
+            }
+            for (auto& t : jthreads) {
+                t.join();
+            }
+        }
         renderer.present();
     }
 
@@ -241,6 +261,12 @@ void scene2() {
     int cycle = 0;
     int maxCycles = 10;
 
+    //MT threads
+    unsigned int numCPUs = std::jthread::hardware_concurrency();
+    //int numCPUs = 20;
+    std::vector<std::jthread> jthreads(numCPUs);
+    int rowsPerThread = renderer.canvas.getHeight() / numCPUs;
+
     bool running = true;
     while (running) {
         renderer.canvas.checkInput();
@@ -268,9 +294,21 @@ void scene2() {
 
         if (renderer.canvas.keyPressed(VK_ESCAPE)) break;
 
-        //Likely suspect for MT
-        for (auto& m : scene)
-            render(renderer, m, camera, L);
+        {
+            for (unsigned int i = 0; i < numCPUs; i++) {
+                int yMin = i * rowsPerThread;
+                int yMax = (i == numCPUs - 1) ? renderer.canvas.getHeight() : (i + 1) * rowsPerThread;
+
+                jthreads[i] = std::jthread([&renderer, &scene, &camera, &L, yMin, yMax]() {
+                    for (auto& m : scene) {
+                        render(renderer, m, camera, L, yMin, yMax);
+                    }
+                    });
+            }
+            for (auto& t : jthreads) {
+                t.join();
+            }
+        }
         renderer.present();
     }
 
