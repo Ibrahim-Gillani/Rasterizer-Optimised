@@ -153,7 +153,7 @@ public:
     // - renderer: Renderer object for drawing
     // - L: Light object for shading calculations
     // - ka, kd: Ambient and diffuse lighting coefficients
-    void draw(Renderer& renderer, Light& L, float ka, float kd) {
+    void draw(Renderer& renderer, Light& L, float ka, float kd, int tileXMin, int tileYMin, int tileXMax, int tileYMax) {
         vec2D minV, maxV;
 
         // Get the screen-space bounds of the triangle
@@ -162,10 +162,18 @@ public:
         // Skip very small triangles
         if (area < 1.f) return;
 
+        //VClamp draw so triangle work is not duplicated over tiles
+        int startY = std::max((int)minV.y, tileYMin);
+        int endY = std::min((int)ceil(maxV.y), tileYMax);
+
         // Iterate over the bounding box and check each pixel
-        for (int y = (int)(minV.y); y < (int)ceil(maxV.y); y++) {
+        for (int y = startY; y < endY; y++) {
+            //clamp x to tile edges
+            int startX = std::max((int)minV.x, tileXMin);
+            int endX = std::min((int)ceil(maxV.x), tileXMax);
+
             //SIMD over x loop
-            for (int x = (int)(minV.x); x < (int)ceil(maxV.x); x+=8) {
+            for (int x = startX; x < endX; x+=8) {
                 //load 8 pixels
                 __m256 pixelsX = _mm256_set_ps(x + 7.0f, x + 6.0f, x + 5.0f, x + 4.0f, x + 3.0f, x + 2.0f, x + 1.0f, x + 0.0f);
                 __m256 pixelY = _mm256_set1_ps((float)y);

@@ -15,6 +15,16 @@
 #include "RNG.h"
 #include "light.h"
 #include "triangle.h"
+#include <thread>
+
+struct TransformedTriangle {
+    Vertex v[3];
+    float ka, kd;
+};
+
+struct Tile {
+    std::vector<TransformedTriangle> triangles;
+};
 
 // Main rendering function that processes a mesh, transforms its vertices, applies lighting, and draws triangles on the canvas.
 // Input Variables:
@@ -59,7 +69,88 @@ void render(Renderer& renderer, Mesh* mesh, matrix& camera, Light& L) {
 
         // Create a triangle object and render it
         triangle tri(t[0], t[1], t[2]);
-        tri.draw(renderer, L, mesh->ka, mesh->kd);
+        //tri.draw(renderer, L, mesh->ka, mesh->kd);
+    }
+}
+
+void trianglesToTiles(Renderer& renderer, Mesh* mesh, matrix& camera, std::vector<Tile>& tiles, int tileX, int tileY, int tileSize ) {
+    // Combine perspective, camera, and world transformations for the mesh
+    matrix p = renderer.perspective * camera * mesh->world;
+
+    //Move canvas calls out of loop
+    float halfWidth = 0.5f * static_cast<float>(renderer.canvas.getWidth());
+    float halfHeight = 0.5f * static_cast<float>(renderer.canvas.getHeight());
+    float Height = renderer.canvas.getHeight();
+
+    // Iterate through all triangles in the mesh
+    for (triIndices& ind : mesh->triangles) {
+        Vertex t[3]; // Temporary array to store transformed triangle vertices
+
+        // Transform each vertex of the triangle
+        for (unsigned int i = 0; i < 3; i++) {
+            t[i].p = p * mesh->vertices[ind.v[i]].p; // Apply transformations
+            t[i].p.divideW(); // Perspective division to normalize coordinates
+
+            // Transform normals into world space for accurate lighting
+            // no need for perspective correction as no shearing or non-uniform scaling
+            t[i].normal = mesh->world * mesh->vertices[ind.v[i]].normal;
+            t[i].normal.normalise();
+
+            // Map normalized device coordinates to screen space
+            t[i].p[0] = (t[i].p[0] + 1.f) * halfWidth;
+            t[i].p[1] = (t[i].p[1] + 1.f) * halfHeight;
+            t[i].p[1] = Height - t[i].p[1]; // Invert y-axis
+
+            // Copy vertex colours
+            t[i].rgb = mesh->vertices[ind.v[i]].rgb;
+        }
+
+        // Clip triangles with Z-values outside [-1, 1]
+        if (fabs(t[0].p[2]) > 1.0f || fabs(t[1].p[2]) > 1.0f || fabs(t[2].p[2]) > 1.0f) continue;
+
+        //Store traingles
+        TransformedTriangle tt;
+        tt.v[0] = t[0];
+        tt.v[1] = t[1];
+        tt.v[2] = t[2];
+        tt.ka = mesh->ka;
+        tt.kd = mesh->kd;
+
+        //Compute bounding box
+        float triLeft = std::min({ t[0].p[0], t[1].p[0], t[2].p[0] }); //leftmost edge
+        float triRight = std::max({ t[0].p[0], t[1].p[0], t[2].p[0] });
+        float triBot = std::min({ t[0].p[1], t[1].p[1], t[2].p[1] });
+        float triTop = std::max({ t[0].p[1], t[1].p[1], t[2].p[1] });
+
+        //std::cout << "Tri pixels: X=" << triLeft << "-" << triRight
+        //    << " Y=" << triBot << "-" << triTop << std::endl;
+
+        //Check overlap with tiles#
+        int tileLeft = std::max(0, (int)(triLeft / tileSize));
+        int tileRight = std::min(tileX - 1, (int)(triRight / tileSize));
+        int tileBot = std::max(0, (int)(triBot / tileSize));
+        int tileTop = std::min(tileY - 1, (int)(triTop / tileSize));
+
+        //std::cout << "Triangle: L=" << tileLeft << " R=" << tileRight
+        //    << " B=" << tileBot << " T=" << tileTop << std::endl;
+
+        //Store data
+        for (int i = tileBot; i <= tileTop; i++) {
+            for (int j = tileLeft; j <= tileRight; j++) {
+                int tileId = i * tileX + j;
+                tiles[tileId].triangles.push_back(tt);
+            }
+        }
+
+    }
+}
+
+void renderTiles(Renderer& renderer, Light& L, std::vector<Tile>& tiles) {
+    for (Tile& tile : tiles) {
+        for (TransformedTriangle& tt : tile.triangles) {
+            triangle tri(tt.v[0], tt.v[1], tt.v[2]);
+           // tri.draw(renderer, L, tt.ka, tt.kd);
+        }
     }
 }
 
@@ -154,6 +245,20 @@ void scene1() {
         scene.emplace_back(m); //EMPLACE
     }
 
+    //Tile Set up
+    const int tileSize = 64;
+    int screenWidth = renderer.canvas.getWidth();
+    int screenHeight = renderer.canvas.getHeight();
+    int tilesX = (screenWidth + tileSize - 1) / tileSize;
+    int tilesY = (screenHeight + tileSize - 1) / tileSize;
+    std::vector<Tile> tiles(tilesX * tilesY);
+
+    //MT set up
+    unsigned int numCPUs = std::jthread::hardware_concurrency();
+    //int numCPUs = 20;
+    std::vector<std::jthread> threads(numCPUs);
+    int tilesPerThread = (tiles.size() + numCPUs - 1) / numCPUs;
+
     float zoffset = 8.0f; // Initial camera Z-offset
     float step = -0.1f;  // Step size for camera movement
 
@@ -189,8 +294,53 @@ void scene1() {
             running = false;  //exit after 10 loops
         }
 
-        for (auto& m : scene)
-            render(renderer, m, camera, L);
+        //for (auto& m : scene)
+        //    render(renderer, m, camera, L);
+        //renderer.present();
+
+        //clear tiles
+        for (auto& t : tiles) {
+            t.triangles.clear();
+        }
+
+        //fill tiles
+        for (auto& m : scene) {
+            trianglesToTiles(renderer, m, camera, tiles, tilesX, tilesY, tileSize);
+        }
+
+        //render and present
+        //renderTiles(renderer, L, tiles);
+        //renderer.present();
+        {
+            //MT tiles render
+            for (unsigned int i = 0; i < numCPUs; i++) {
+                int startTile = i * tilesPerThread;
+                int endTile = std::min((unsigned int)tiles.size(), (i + 1) * tilesPerThread);
+
+                threads[i] = std::jthread([&, startTile, endTile]() {
+                    for (int tileId = startTile; tileId < endTile; tileId++) {
+                        Tile& tile = tiles[tileId];
+
+                        //calulctae tile bounds
+                        int tileX = tileId % tilesX;
+                        int tileY = tileId / tilesX;
+                        int tileXMin = tileX * tileSize;
+                        int tileYMin = tileY * tileSize;
+                        int tileXMax = tileXMin + tileSize;
+                        int tileYMax = tileYMin + tileSize;
+
+                        for (TransformedTriangle& tt : tile.triangles) {
+                            triangle tri(tt.v[0], tt.v[1], tt.v[2]);
+                            tri.draw(renderer, L, tt.ka, tt.kd, tileXMin, tileYMin, tileXMax, tileYMax);
+                        }
+                    }
+                    });
+
+            }
+            for (auto& t : threads) {
+                t.join();
+            }
+        }
         renderer.present();
     }
 
@@ -236,6 +386,20 @@ void scene2() {
     float sphereStep = 0.1f;
     sphere->world = matrix::makeTranslation(sphereOffset, 0.f, -6.f);
 
+    //Tile Set up
+    const int tileSize = 64;
+    int screenWidth = renderer.canvas.getWidth();
+    int screenHeight = renderer.canvas.getHeight();
+    int tilesX = (screenWidth + tileSize - 1) / tileSize;
+    int tilesY = (screenHeight + tileSize - 1) / tileSize;
+    std::vector<Tile> tiles(tilesX* tilesY);
+
+    //MT set up
+    //unsigned int numCPUs = std::jthread::hardware_concurrency();
+    int numCPUs = 12;
+    std::vector<std::jthread> threads(numCPUs);
+    int tilesPerThread = (tiles.size() + numCPUs - 1) / numCPUs;
+
     auto start = std::chrono::high_resolution_clock::now();
     std::chrono::time_point<std::chrono::high_resolution_clock> end;
     int cycle = 0;
@@ -268,9 +432,50 @@ void scene2() {
 
         if (renderer.canvas.keyPressed(VK_ESCAPE)) break;
 
-        //Likely suspect for MT
-        for (auto& m : scene)
-            render(renderer, m, camera, L);
+
+        //clear tiles
+        for (auto& t : tiles) {
+            t.triangles.clear();
+        }
+
+        //fill tiles
+        for (auto& m : scene) {
+            trianglesToTiles(renderer, m, camera, tiles, tilesX, tilesY, tileSize);
+        }
+
+        //render and present
+        //renderTiles(renderer, L, tiles);
+        //renderer.present();
+        {
+            //MT tiles render
+            for (unsigned int i = 0; i < numCPUs; i++) {
+                int startTile = i * tilesPerThread;
+                int endTile = std::min((unsigned int)tiles.size(), (i + 1) * tilesPerThread);
+
+                threads[i] = std::jthread([&, startTile, endTile]() {
+                    for (int tileId = startTile; tileId < endTile; tileId++) {
+                        Tile& tile = tiles[tileId];
+
+                        //calulctae tile bounds
+                        int tileX = tileId % tilesX;
+                        int tileY = tileId / tilesX;
+                        int tileXMin = tileX * tileSize;
+                        int tileYMin = tileY * tileSize;
+                        int tileXMax = tileXMin + tileSize;
+                        int tileYMax = tileYMin + tileSize;
+
+                        for (TransformedTriangle& tt : tile.triangles) {
+                            triangle tri(tt.v[0], tt.v[1], tt.v[2]);
+                            tri.draw(renderer, L, tt.ka, tt.kd, tileXMin, tileYMin, tileXMax, tileYMax);
+                        }
+                    }
+                    });
+
+            }
+            for (auto& t : threads) {
+                t.join();
+            }
+        }
         renderer.present();
     }
 
