@@ -316,12 +316,113 @@ void scene2() {
         delete m;
 }
 
+void scene3() {
+    Renderer renderer;
+    matrix camera = matrix::makeIdentity();
+    Light L{ vec4(0.f, 1.f, 1.f, 0.f), colour(1.0f, 1.0f, 1.0f), colour(0.2f, 0.2f, 0.2f) };
+
+    //Normalise light
+    L.omega_i.normalise();
+
+    std::vector<Mesh*> scene;
+    scene.reserve(300);
+
+    struct rRot { float x; float y; float z; }; // Structure to store random rotation parameters
+    std::vector<rRot> rotations;
+
+    RandomNumberGenerator& rng = RandomNumberGenerator::getInstance();
+
+    //tunnel
+    for (int ring = 0; ring < 15; ring++) {
+        float z = -2.f - (ring * 3.f);
+
+        //10 cubes per ring in a circle
+        for (int i = 0; i < 20; i++) {
+            float angle = (i / 16.f) * 2.f * M_PI;
+            float radius = 4.f;
+            float x = cos(angle) * radius;
+            float y = sin(angle) * radius;
+
+            Mesh* m = new Mesh();
+            *m = Mesh::makeCube(0.5f);
+            m->world = matrix::makeTranslation(x, y, z) * makeRandomRotation();
+            scene.emplace_back(m);
+            rRot r{ rng.getRandomFloat(-.1f, .1f), rng.getRandomFloat(-.1f, .1f), rng.getRandomFloat(-.1f, .1f) };
+            rotations.push_back(r);
+        }
+    }
+
+    float zoffset = 8.0f;  // Start in front
+    float step = -0.15f;    // Move forward
+
+    //MT threads
+    //unsigned int numCPUs = std::thread::hardware_concurrency();
+    unsigned int numCPUs = 1;
+    std::vector<std::thread> threads(numCPUs);
+    int rowsPerThread = renderer.canvas.getHeight() / numCPUs;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    std::chrono::time_point<std::chrono::high_resolution_clock> end;
+    int cycle = 0;
+    int maxCycles = 10;
+
+    bool running = true;
+    while (running) {
+        renderer.canvas.checkInput();
+        renderer.clear();
+
+        zoffset += step;
+        camera = matrix::makeTranslation(0, 0, -zoffset);
+
+        //rotate cubes
+        for (unsigned int i = 0; i < scene.size(); i++) {
+            scene[i]->world = scene[i]->world * matrix::makeRotateXYZ(rotations[i].x, rotations[i].y, rotations[i].z);
+        }
+
+        if (zoffset < -85.f || zoffset > 8.f) {
+            step *= -1.f;
+            if (++cycle % 2 == 0) {
+                end = std::chrono::high_resolution_clock::now();
+                std::cout << std::chrono::duration<double, std::milli>(end - start).count() << "\n";
+                start = std::chrono::high_resolution_clock::now();
+            }
+        }
+
+        if (cycle >= maxCycles * 2) {
+            running = false;
+        }
+
+        if (renderer.canvas.keyPressed(VK_ESCAPE)) break;
+
+        {
+            for (unsigned int i = 0; i < numCPUs; i++) {
+                int yMin = i * rowsPerThread;
+                int yMax = (i == numCPUs - 1) ? renderer.canvas.getHeight() : (i + 1) * rowsPerThread;
+
+                threads[i] = std::thread([&renderer, &scene, &camera, &L, yMin, yMax]() {
+                    for (auto& m : scene) {
+                        render(renderer, m, camera, L, yMin, yMax);
+                    }
+                    });
+            }
+            for (auto& t : threads) {
+                t.join();
+            }
+        }
+        renderer.present();
+    }
+
+    for (auto& m : scene)
+        delete m;
+}
+
 // Entry point of the application
 // No input variables
 int main() {
     // Uncomment the desired scene function to run
     //scene1();
-    scene2();
+    //scene2();
+    scene3();
     //sceneTest(); 
     
 
