@@ -531,8 +531,8 @@ void scene3() {
     std::vector<Tile> tiles(tilesX * tilesY);
 
     //MT set up
-    //unsigned int numCPUs = std::thread::hardware_concurrency();
-    unsigned int numCPUs = 1;
+    unsigned int numCPUs = std::thread::hardware_concurrency();
+    //unsigned int numCPUs = 20;
     std::vector<std::thread> threads(numCPUs);
     int tilesPerThread = (tiles.size() + numCPUs - 1) / numCPUs;
 
