@@ -356,8 +356,8 @@ void scene3() {
     float step = -0.15f;    // Move forward
 
     //MT threads
-    //unsigned int numCPUs = std::thread::hardware_concurrency();
-    unsigned int numCPUs = 1;
+    unsigned int numCPUs = std::thread::hardware_concurrency();
+    //unsigned int numCPUs = 20;
     std::vector<std::thread> threads(numCPUs);
     int rowsPerThread = renderer.canvas.getHeight() / numCPUs;
 
